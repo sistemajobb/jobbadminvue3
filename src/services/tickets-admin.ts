@@ -34,4 +34,15 @@ export const ticketsAdminService = {
   reabrir(id: number) {
     return api.post(`/tickets/${id}/reabrir`)
   },
+  uploadAnexo(ticketId: number, file: File, idTicketResposta?: number | null) {
+    const fd = new FormData()
+    fd.append('arquivo', file)
+    if (idTicketResposta != null) {
+      fd.append('id_ticket_resposta', String(idTicketResposta))
+    }
+    return api.post(`/tickets/${ticketId}/anexos`, fd)
+  },
+  getAnexoDownloadUrl(ticketId: number, anexoId: number) {
+    return api.get<{ url: string }>(`/tickets/${ticketId}/anexos/${anexoId}/download`)
+  },
 }

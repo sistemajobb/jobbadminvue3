@@ -50,8 +50,23 @@
             {{ prioridadeSelecionada.nome }}
           </span>
         </div>
-        <textarea v-model="form.descricao" rows="4" class="mt-3 w-full rounded-lg border p-3" placeholder="Descrição" />
-        <button class="mt-3 rounded-lg bg-gray-700 px-3 py-2 text-white" @click="criar">Abrir ticket</button>
+        <textarea
+          v-model="form.descricao"
+          rows="4"
+          class="mt-3 w-full rounded-lg border p-3"
+          placeholder="Descrição"
+          @paste="onPasteDescricao"
+        />
+        <PortalTicketAnexos ref="anexosRef" v-model="pendingAttachments" />
+        <button
+          type="button"
+          class="mt-3 inline-flex items-center gap-2 rounded-lg bg-gray-700 px-3 py-2 text-white disabled:cursor-not-allowed disabled:opacity-60"
+          :disabled="abrindoTicket"
+          @click="criar"
+        >
+          <Loader2 v-if="abrindoTicket" class="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+          {{ abrindoTicket ? 'Abrindo…' : 'Abrir ticket' }}
+        </button>
       </div>
 
       <div class="rounded-lg bg-white p-4 shadow-sm">
@@ -83,7 +98,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { Loader2 } from 'lucide-vue-next'
 import PortalLayout from '@/components/layout/PortalLayout.vue'
+import PortalTicketAnexos from '@/components/tickets/PortalTicketAnexos.vue'
 import { ticketsPortalService } from '@/services/tickets-portal'
 
 const route = useRoute()
@@ -96,6 +114,9 @@ const sessao = reactive({
 })
 const meta = reactive({ prioridades: [], categorias: [] } as any)
 const form = reactive({ assunto: '', descricao: '', email_contato: '', id_prioridade: '', id_categoria: '' })
+const pendingAttachments = ref<File[]>([])
+const anexosRef = ref<InstanceType<typeof PortalTicketAnexos> | null>(null)
+const abrindoTicket = ref(false)
 
 const decodeHandoffPayload = (token: string) => {
   try {
@@ -147,17 +168,42 @@ const prioridadeBadgeClass = (cor: string) => {
   return 'bg-gray-100 text-gray-700'
 }
 
+const onPasteDescricao = (e: ClipboardEvent) => {
+  const list = e.clipboardData?.files
+  if (!list?.length) return
+  e.preventDefault()
+  anexosRef.value?.addFiles(Array.from(list))
+}
+
 const criar = async () => {
-  await ticketsPortalService.criar({
-    titulo: form.assunto,
-    descricao: form.descricao,
-    email_contato: form.email_contato,
-    id_prioridade: form.id_prioridade,
-    id_categoria: form.id_categoria,
-  })
-  form.assunto = ''
-  form.descricao = ''
-  await carregar()
+  if (abrindoTicket.value) return
+  abrindoTicket.value = true
+  try {
+    const { data } = await ticketsPortalService.criar({
+      titulo: form.assunto,
+      descricao: form.descricao,
+      email_contato: form.email_contato,
+      id_prioridade: form.id_prioridade,
+      id_categoria: form.id_categoria,
+    })
+    const ticketId = Number(data.id)
+    for (const file of pendingAttachments.value) {
+      try {
+        await ticketsPortalService.uploadAnexo(ticketId, file)
+      } catch {
+        ElMessage.error(`Não foi possível enviar o anexo: ${file.name}`)
+      }
+    }
+    pendingAttachments.value = []
+    form.assunto = ''
+    form.descricao = ''
+    ElMessage.success('Ticket aberto com sucesso.')
+    await carregar()
+  } catch {
+    ElMessage.error('Não foi possível abrir o ticket. Verifique os campos.')
+  } finally {
+    abrindoTicket.value = false
+  }
 }
 
 onMounted(async () => {
@@ -167,12 +213,19 @@ onMounted(async () => {
     sessao.nome_usuario = handoffPayload.nome || ''
     sessao.unidade_nome = handoffPayload.unidade_nome || ''
     sessao.unidade_dbname = handoffPayload.dbname || ''
+    if (handoffPayload.email) {
+      form.email_contato = String(handoffPayload.email)
+    }
   }
 
   if (handoff) {
     const { data } = await ticketsPortalService.exchange(handoff)
     localStorage.setItem('auth-portal', data.portal_token)
     localStorage.setItem('portal-ticket-user', JSON.stringify(data.user || {}))
+    const u = data.user as { email?: string } | undefined
+    if (u?.email) {
+      form.email_contato = String(u.email)
+    }
     router.replace('/portal/tickets')
   }
   if (!localStorage.getItem('auth-portal')) {
@@ -182,10 +235,18 @@ onMounted(async () => {
   const sessaoLocal = localStorage.getItem('portal-ticket-user')
   if (sessaoLocal) {
     try {
-      const local = JSON.parse(sessaoLocal)
+      const local = JSON.parse(sessaoLocal) as {
+        nome?: string
+        unidade_nome?: string
+        unidade_dbname?: string
+        email?: string
+      }
       sessao.nome_usuario = local.nome || ''
       sessao.unidade_nome = local.unidade_nome || ''
       sessao.unidade_dbname = local.unidade_dbname || ''
+      if (local.email) {
+        form.email_contato = String(local.email)
+      }
     } catch (e) {
       // noop
     }
@@ -196,6 +257,9 @@ onMounted(async () => {
     sessao.nome_usuario = meResp.data.nome_usuario || sessao.nome_usuario
     sessao.unidade_nome = meResp.data.unidade_nome || sessao.unidade_nome
     sessao.unidade_dbname = meResp.data.unidade_dbname || sessao.unidade_dbname
+    if (meResp.data.email) {
+      form.email_contato = String(meResp.data.email)
+    }
   } catch (e) {
     // mantém fallback local
   }

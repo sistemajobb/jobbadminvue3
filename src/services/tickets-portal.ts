@@ -39,4 +39,15 @@ export const ticketsPortalService = {
   responder(id: number, mensagem: string) {
     return portalApi.post(`/portal/tickets/${id}/responder`, { mensagem })
   },
+  uploadAnexo(ticketId: number, file: File, idTicketResposta?: number | null) {
+    const fd = new FormData()
+    fd.append('arquivo', file)
+    if (idTicketResposta != null) {
+      fd.append('id_ticket_resposta', String(idTicketResposta))
+    }
+    return portalApi.post(`/portal/tickets/${ticketId}/anexos`, fd)
+  },
+  getAnexoDownloadUrl(ticketId: number, anexoId: number) {
+    return portalApi.get<{ url: string }>(`/portal/tickets/${ticketId}/anexos/${anexoId}/download`)
+  },
 }
